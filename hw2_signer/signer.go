@@ -16,6 +16,7 @@ var in chan interface{}
 var out chan interface{}
 
 func main() {
+	//inputData := []int{0, 1, 1, 2, 3, 5, 8}
 	in = make(chan interface{}, 1)
 	out = make(chan interface{}, 1)
 	reader := bufio.NewReader(os.Stdin)
@@ -24,8 +25,8 @@ func main() {
 	fmt.Println(arg)
 	start := time.Now()
 	go SingleHash(in, out)
-	//go MultiHash(in, out)
-	in <- "0"
+	go MultiHash(in, out)
+	out <- "0"
 	//for r := range out {
 	//	log.Println(r)
 	//}
@@ -52,7 +53,7 @@ func ExecutePipeLine(pipeline []job) {
 }
 
 var SingleHash = func(in, out chan interface{}) {
-	data, ok := (<-in).(string)
+	data, ok := (<-out).(string)
 
 	if !ok {
 		fmt.Println("cant convert result data to string")
@@ -69,31 +70,34 @@ var SingleHash = func(in, out chan interface{}) {
 		runtime.Gosched()
 	}(ch1)
 
-	out <- fmt.Sprintf("%v~%v", <-ch1, <-ch1)
-	//out <- DataSignerCrc32(data) + "~" +
+	val := fmt.Sprintf("%v~%v", <-ch1, <-ch1)
+	in <- val
+	close(ch1)
 }
 
 var MultiHash = func(in, out chan interface{}) {
-	//var result, tmp string
-	dataRaw := <-in
-	data, ok := dataRaw.(string)
+	data, ok := (<-in).(string)
+	fmt.Println(data)
+
 	if !ok {
 		fmt.Println("cant convert result data to string")
 	}
-	fmt.Println(data)
+
+	result := ""
+
 	for i := 0; i <= 5; i++ {
-		go func(out chan <- interface{}) {
-			out <- DataSignerCrc32(strconv.Itoa(i) + data)
-		}(out)
-		fmt.Printf("%v MultiHash: crc32(th+step1)) %v %v\n", data, i, <-out)
-		//result += fmt.Sprintf("%v", tmp)
+		go func(th int) {
+			fmt.Println(th)
+			out <- DataSignerCrc32(strconv.Itoa(th) + data)
+			//runtime.Gosched()
+		}(i)
 	}
-	close(out)
-	//for s := range out {
-	//
-	//}
-	//fmt.Printf("%v", result)
-	//out <- result
+
+	for s := range out {
+		fmt.Println(s)
+	}
+
+	out <- result
 }
 
 var CombineResults = func(){}
