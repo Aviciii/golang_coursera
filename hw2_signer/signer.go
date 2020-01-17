@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -14,8 +15,10 @@ import (
 
 var in chan interface{}
 var out chan interface{}
+var wg sync.WaitGroup
 
 func main() {
+	start := time.Now()
 	//inputData := []int{0, 1, 1, 2, 3, 5, 8}
 	in = make(chan interface{}, 1)
 	out = make(chan interface{}, 1)
@@ -23,13 +26,12 @@ func main() {
 	arg, _ := reader.ReadString('\n')
 
 	fmt.Println(arg)
-	start := time.Now()
+	wg.Add(2)
 	go SingleHash(in, out)
 	go MultiHash(in, out)
 	out <- "0"
-	//for r := range out {
-	//	log.Println(r)
-	//}
+	wg.Wait()
+
 
 	//fmt.Println(<-in)
 	//fmt.Println(<-out)
@@ -53,6 +55,7 @@ func ExecutePipeLine(pipeline []job) {
 }
 
 var SingleHash = func(in, out chan interface{}) {
+	defer wg.Done()
 	data, ok := (<-out).(string)
 
 	if !ok {
@@ -76,28 +79,29 @@ var SingleHash = func(in, out chan interface{}) {
 }
 
 var MultiHash = func(in, out chan interface{}) {
+	defer wg.Done()
 	data, ok := (<-in).(string)
 	fmt.Println(data)
+	hashCount := 6
+	var chans [6]chan string
 
 	if !ok {
 		fmt.Println("cant convert result data to string")
 	}
 
-	result := ""
-
-	for i := 0; i <= 5; i++ {
+	for i := 0; i < hashCount; i++ {
 		go func(th int) {
-			fmt.Println(th)
-			out <- DataSignerCrc32(strconv.Itoa(th) + data)
+			mOut <- DataSignerCrc32(strconv.Itoa(th) + data)
 			//runtime.Gosched()
 		}(i)
 	}
 
-	for s := range out {
-		fmt.Println(s)
+	for hashCount > 0 {
+		fmt.Println(<-mOut)
+		hashCount--
 	}
 
-	out <- result
+	out <- "done"
 }
 
 var CombineResults = func(){}
