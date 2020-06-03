@@ -2,85 +2,117 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"sort"
 	"strconv"
-	"time"
+	"strings"
+	"sync"
 )
 
 // сюда писать код
-
-func main() {
-	start := time.Now()
-	ch1 := make(chan interface{})
-	ch2 := make(chan interface{})
-	go SingleHash(ch1, ch2)
-	ch1 <- "0"
-	fmt.Printf("%v", <-ch2)
-	end := time.Since(start)
-	//go MultiHash(ch2, ch1)
-	//fmt.Printf("%v\n", <-ch2)
-	//fmt.Printf("%v", <-ch1)
-
-	log.Printf("run time: %v", end)
-	fmt.Scanln()
-
-	//result := <-ch2
-	//fmt.Printf("%v", result)
-	//MultiHash(data)
-}
-
-func ExecutePipeLine() {
-
-}
-
 var SingleHash = func(in, out chan interface{}) {
-	var result string
-	ch1 := make(chan interface{}, 1)
-	dataRaw := <-in
-	data, ok := dataRaw.(string)
+	var data string
+	var i uint8
+	var crc32md5Chans []chan interface{}
+	var crc32Chans []chan interface{}
 
-	if !ok {
-		fmt.Println("cant convert result data to string")
+	for o := range in {
+		data = fmt.Sprintf("%v", o)
+
+		md5 := DataSignerMd5(data)
+		crc32md5Chans = append(crc32md5Chans, make(chan interface{}))
+		crc32Chans = append(crc32Chans, make(chan interface{}))
+
+		go func(ch chan interface{}, md5 string) {
+			ch <- DataSignerCrc32(md5)
+			close(ch)
+		}(crc32md5Chans[i], md5)
+
+		go func(ch chan interface{}, data string) {
+			ch <- DataSignerCrc32(data)
+			close(ch)
+		}(crc32Chans[i], data)
+
+		i++
 	}
 
-	go func(out chan <- interface{}) {
-		out <- DataSignerCrc32(data)
-	}(ch1)
-
-	go func(out chan <- interface{}) {
-		out <- DataSignerCrc32(DataSignerMd5(data))
-		close(out)
-	}(ch1)
-
-	for i := range ch1 {
-		result += fmt.Sprintf("%v~", i)
+	for i > 0 {
+		out <- fmt.Sprintf("%s~%s", <-crc32Chans[i-1], <-crc32md5Chans[i-1])
+		i--
 	}
-
-	//out <- DataSignerCrc32(data) + "~" +
 }
 
 var MultiHash = func(in, out chan interface{}) {
-	//var result, tmp string
-	dataRaw := <-in
-	data, ok := dataRaw.(string)
-	if !ok {
-		fmt.Println("cant convert result data to string")
+	i, j, thMax := 0, 0, 6
+	var RrChans [][]chan string
+	var result string
+
+	for shData := range in {
+		data := fmt.Sprintf("%v", shData)
+		RrChans = append(RrChans, make([]chan string, thMax))
+		for i = 0; i < thMax; i++ {
+			RrChans[j][i] = make(chan string)
+			go func(result chan string, i int, data string) {
+				th := strconv.Itoa(i)
+				thData := DataSignerCrc32(th + data)
+				result <- thData
+				close(result)
+			}(RrChans[j][i], i, data)
+		}
+
+		j++
 	}
-	fmt.Println(data)
-	for i := 0; i <= 5; i++ {
-		go func(out chan <- interface{}) {
-			out <- DataSignerCrc32(strconv.Itoa(i) + data)
-			//out <- tmp
-		}(out)
-		fmt.Printf("%v MultiHash: crc32(th+step1)) %v %v\n", data, i, <-out)
-		//result += fmt.Sprintf("%v", tmp)
+
+	for _, rChan := range RrChans {
+		result = ""
+		for _, r := range rChan {
+			result += <-r
+		}
+		out <- result
 	}
-	close(out)
-	//for s := range out {
-	//
-	//}
-	//fmt.Printf("%v", result)
-	//out <- result
 }
 
-var CombineResults = func(){}
+var CombineResults = func(in, out chan interface{}) {
+	var result []string
+
+	for mData := range in {
+		data := fmt.Sprintf("%v", mData)
+		result = append(result, data)
+	}
+
+	sort.Strings(result)
+	strResult := strings.Join(result, "_")
+
+	out <- strResult
+}
+
+var ExecutePipeline = func(pipeline ...job) {
+	chanOutSlice := make([]chan interface{}, len(pipeline))
+	chanInSlice := make([]chan interface{}, len(pipeline)+1)
+	wg := &sync.WaitGroup{}
+
+	for i, f := range pipeline {
+		chanOutSlice[i] = make(chan interface{})
+		chanInSlice[i] = make(chan interface{})
+
+		f := f
+		i := i
+		go func() {
+			f(chanInSlice[i], chanOutSlice[i])
+			close(chanOutSlice[i])
+		}()
+	}
+
+	for n, ch := range chanOutSlice {
+		wg.Add(1)
+		go func(ch chan interface{}, chanInSlice []chan interface{}, n int, wg *sync.WaitGroup) {
+			defer wg.Done()
+			for val := range ch {
+				chanInSlice[n+1] <- val
+			}
+			if chanInSlice[n+1] != nil {
+				close(chanInSlice[n+1])
+			}
+		}(ch, chanInSlice, n, wg)
+	}
+	wg.Wait()
+}
